@@ -73,14 +73,20 @@ StyledRect {
             Layout.leftMargin: -Tokens.padding.extraSmall
             spacing: Tokens.spacing.small
 
-            MaterialIcon {
-                text: "auto_awesome"
-                fill: 1
-                color: root.accent
-                fontStyle: Tokens.font.icon.builders.medium.weight(Font.DemiBold).build() // DemiBold to fix fill issues
+            AgentMark {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.leftMargin: Tokens.padding.extraSmall
+
+                // Sized off the title beside it, so it tracks the theme's font
+                // scale the way the other cards' icons do
+                implicitHeight: Math.round(title.implicitHeight * 1.02)
+                implicitWidth: implicitHeight
+                colour: root.accent
             }
 
             StyledText {
+                id: title
+
                 text: qsTr("Agents")
                 font: Tokens.font.title.medium
             }
