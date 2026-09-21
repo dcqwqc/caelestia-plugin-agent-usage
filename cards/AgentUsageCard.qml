@@ -52,8 +52,8 @@ StyledRect {
 
     Binding {
         target: Agents.AgentUsage
-        property: "antigravityFile"
-        value: root.settings?.antigravityUsageFile ?? ""
+        property: "antigravityPool"
+        value: root.settings?.antigravityPool ?? "worst"
         when: !!root.settings
     }
 
@@ -66,7 +66,7 @@ StyledRect {
         anchors.topMargin: Tokens.padding.large
         anchors.bottomMargin: Tokens.padding.large
 
-        spacing: Tokens.spacing.small
+        spacing: Tokens.spacing.medium
 
         RowLayout {
             Layout.fillWidth: true
@@ -74,7 +74,7 @@ StyledRect {
             spacing: Tokens.spacing.small
 
             MaterialIcon {
-                text: "smart_toy"
+                text: "auto_awesome"
                 fill: 1
                 color: root.accent
                 fontStyle: Tokens.font.icon.builders.medium.weight(Font.DemiBold).build() // DemiBold to fix fill issues

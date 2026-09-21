@@ -36,11 +36,12 @@ SettingsObject {
         inputType: SettingMeta.Switch
     }
 
-    property string antigravityUsageFile: ""
-    SettingMeta on antigravityUsageFile {
-        label: "Antigravity usage file"
-        description: "Path to a JSON file holding Antigravity's limits, for an install the collector cannot find on its own."
-        icon: "description"
-        inputType: SettingMeta.TextField
+    property string antigravityPool: "worst"
+    SettingMeta on antigravityPool {
+        label: "Antigravity limit pool"
+        description: "agy bills Gemini apart from the Claude and GPT models it can also drive. Worst shows whichever is nearest its limit."
+        icon: "filter_alt"
+        inputType: SettingMeta.SplitButton
+        options: ["worst", "gemini", "claude-gpt"]
     }
 }

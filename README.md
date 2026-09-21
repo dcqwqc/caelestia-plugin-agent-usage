@@ -13,7 +13,7 @@ swells as the agent gets used up, the way the CPU card's usage blob does.
 |---|---|
 | Claude Code | The usage endpoint, asked with the OAuth credentials Claude Code already stores in `~/.claude/.credentials.json`. |
 | Codex | The `rate_limits` record the server returns with every response, as written into the newest session log under `~/.codex/sessions`. |
-| Antigravity | A usage file under an Antigravity data directory, or one named by hand in the plugin settings. |
+| Antigravity | `agy -p /usage`, which answers the CLI's read-only slash commands in print mode without spending a turn. |
 
 An agent that is not installed, not signed in, or has never been run says so
 instead of drawing an empty gauge — nothing here reports 0% for "no idea".
@@ -48,7 +48,8 @@ The hero cards there give up their stretch while a plugin holds that slot, so
 the CPU card's usage blob stays beside the CPU readout instead of being pushed
 to the far right of the row.
 
-`python3` for the collector. No other dependencies.
+`python3` for the collector, and `agy` on PATH for the Antigravity row. No
+other dependencies.
 
 ## Install
 
@@ -65,21 +66,29 @@ Then enable `dcqwqc/agentusage` on the Plugins page.
 |---|---|---|
 | Refresh interval | 120s | Claude Code is asked over the network, the rest is read off disk. |
 | Show Claude Code / Codex / Antigravity | on | Hides a row entirely. |
-| Antigravity usage file | — | Path to a JSON file holding Antigravity's limits, for an install the collector cannot find on its own. |
+| Antigravity limit pool | worst | `worst`, `gemini` or `claude-gpt` — see below. |
 
 The collector caches to `$XDG_RUNTIME_DIR/caelestia-agent-usage.json` for half
 the refresh interval, so several shells on one machine do not each go asking.
 
 ## Antigravity
 
-Antigravity is read from disk, not queried, because it has no documented local
-endpoint. The collector looks in `~/.antigravity`, `~/.config/Antigravity` and
-`~/.local/share/antigravity` for a `usage.json`, `quota.json`,
-`rate_limits.json`, `limits.json` or any `usage*.json`, and accepts either
-`{"five_hour": 12, "weekly": 40}` or the nested
-`{"primary": {"used_percent": 12}}` shape, in 0–1 or 0–100.
+`agy` reports what is **left**, not what is spent, and it bills Gemini apart
+from the Claude and GPT models it can also drive — so there is no single
+number for it:
 
-Point the setting at a file of that shape to feed it something else.
+```
+Gemini Models            Weekly Limit Remaining      5%    2026-09-23T12:14:00Z
+Gemini Models            Five Hour Limit Remaining  99%    2026-09-21T20:41:22Z
+Claude and GPT models    Weekly Limit Remaining     66%    2026-09-27T19:48:19Z
+Claude and GPT models    Five Hour Limit Remaining 100%    2026-09-21T22:37:26Z
+```
+
+The row shows whichever pool is nearest its limit, per window, because that is
+the one that will stop you first. Pin it to one pool in the settings instead.
+
+Asking costs about 2.5s of process startup, so the cache matters here more than
+for the others.
 
 ## Marks
 

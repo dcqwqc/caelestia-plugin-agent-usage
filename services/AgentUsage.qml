@@ -14,9 +14,9 @@ Singleton {
 
     // Seconds between polls. The card binds this from the plugin settings.
     property int interval: 120
-    // An Antigravity usage file found by hand, for an install layout the
-    // collector does not know about on its own.
-    property string antigravityFile: ""
+    // Which of agy's limit pools to show, or "worst" for whichever of them is
+    // nearest its limit.
+    property string antigravityPool: "worst"
 
     property var agents: []
     property bool ready: false
@@ -31,14 +31,14 @@ Singleton {
     // A poll never costs more than the cache allows, so a refresh forced by a
     // card appearing cannot hammer the endpoints behind it.
     onIntervalChanged: timer.restart()
-    onAntigravityFileChanged: refresh()
+    onAntigravityPoolChanged: refresh()
 
     Process {
         id: proc
 
         command: [root.script, "--max-age", Math.max(15, Math.round(root.interval / 2)).toString()]
         environment: ({
-            CAELESTIA_AGENT_USAGE_ANTIGRAVITY: root.antigravityFile
+            CAELESTIA_AGENT_USAGE_AGY_POOL: root.antigravityPool
         })
         running: false
 

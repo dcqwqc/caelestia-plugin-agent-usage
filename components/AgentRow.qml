@@ -75,7 +75,7 @@ RowLayout {
     ColumnLayout {
         Layout.fillWidth: true
         Layout.alignment: Qt.AlignVCenter
-        spacing: Tokens.spacing.extraSmall
+        spacing: Tokens.spacing.small
 
         RowLayout {
             Layout.fillWidth: true

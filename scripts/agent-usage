@@ -33,6 +33,8 @@ import os
 import sys
 import time
 import glob
+import shutil
+import subprocess
 import urllib.request
 import urllib.error
 
@@ -249,95 +251,110 @@ def _find_key(obj, key):
 
 
 # --------------------------------------------------------------------------
-# Antigravity -- reads whatever its install writes, and can be pointed at a
-# file by hand through the plugin settings for a layout this does not know.
+# Antigravity -- the agy CLI answers its read-only slash commands in print
+# mode, one tab-separated record per line, without spending a turn.
 # --------------------------------------------------------------------------
 
-ANTIGRAVITY_DIRS = [
-    os.path.join(HOME, ".antigravity"),
-    os.path.join(HOME, ".config", "Antigravity"),
-    os.path.join(HOME, ".local", "share", "antigravity"),
-]
-ANTIGRAVITY_NAMES = ["usage.json", "quota.json", "rate_limits.json", "limits.json"]
+AGY_BIN = os.path.join(HOME, ".local", "bin", "agy")
+AGY_POOLS = {"gemini": "Gemini Models", "claude-gpt": "Claude and GPT models"}
 
 
-def antigravity(_timeout):
+def antigravity(timeout):
     name = "Antigravity"
 
-    override = os.environ.get("CAELESTIA_AGENT_USAGE_ANTIGRAVITY")
-    candidates = [override] if override else []
+    agy = AGY_BIN if os.access(AGY_BIN, os.X_OK) else shutil.which("agy")
+    if not agy:
+        return unavailable("antigravity", name, "not installed")
 
-    installed = bool(candidates)
-    for root in ANTIGRAVITY_DIRS:
-        if not os.path.isdir(root):
-            continue
-        installed = True
-        for entry in ANTIGRAVITY_NAMES:
-            candidates.append(os.path.join(root, entry))
-        candidates.extend(
-            sorted(glob.glob(os.path.join(root, "**", "usage*.json"), recursive=True))
+    try:
+        out = subprocess.run(
+            [agy, "-p", "/usage"],
+            capture_output=True,
+            text=True,
+            timeout=max(timeout, 20),
         )
+    except subprocess.TimeoutExpired:
+        return unavailable("antigravity", name, "not answering")
+    except OSError:
+        return unavailable("antigravity", name, "not installed")
 
-    for path in candidates:
-        if not path or not os.path.isfile(path):
+    if out.returncode != 0:
+        return unavailable("antigravity", name, "not signed in")
+
+    pools = _agy_parse(out.stdout)
+    if not pools:
+        return unavailable("antigravity", name, "no usage recorded")
+
+    wanted = os.environ.get("CAELESTIA_AGENT_USAGE_AGY_POOL", "worst")
+    short = _agy_pick(pools, "fiveHour", wanted)
+    long = _agy_pick(pools, "weekly", wanted)
+
+    if short is None and long is None:
+        return unavailable("antigravity", name, "no usage recorded")
+
+    return {
+        "id": "antigravity",
+        "name": name,
+        "available": True,
+        "fiveHour": short[0] if short else -1,
+        "weekly": long[0] if long else -1,
+        "fiveHourResets": short[1] if short else 0,
+        "weeklyResets": long[1] if long else 0,
+        "detail": None,
+        "stale": False,
+    }
+
+
+def _agy_parse(text):
+    """{pool: {window: (used fraction, reset epoch)}} out of /usage's records.
+
+    Each record is `<pool>\t<window> Limit Remaining\t<n>%\t<ISO reset>`, and
+    it reports what is *left*, which is the opposite of every other agent here.
+    """
+    pools = {}
+
+    for line in text.splitlines():
+        fields = [f.strip() for f in line.split("\t")]
+        if len(fields) < 3:
             continue
+
+        pool, label, remaining = fields[0], fields[1], fields[2]
+        if not remaining.endswith("%"):
+            continue
+
+        if "five hour" in label.lower():
+            window = "fiveHour"
+        elif "week" in label.lower():
+            window = "weekly"
+        else:
+            continue
+
         try:
-            with open(path) as f:
-                body = json.load(f)
-        except Exception:
+            used = 1 - float(remaining[:-1]) / 100.0
+        except ValueError:
             continue
 
-        short = _ag_window(body, ("five_hour", "fiveHour", "primary", "short"))
-        long = _ag_window(body, ("weekly", "seven_day", "sevenDay", "secondary", "long"))
-        if short is None and long is None:
-            continue
+        resets = iso_to_epoch(fields[3]) if len(fields) > 3 else 0
+        pools.setdefault(pool, {})[window] = (used, resets)
 
-        return {
-            "id": "antigravity",
-            "name": name,
-            "available": True,
-            "fiveHour": short if short is not None else -1,
-            "weekly": long if long is not None else -1,
-            "fiveHourResets": int(_ag_resets(body, ("five_hour", "fiveHour", "primary")) or 0),
-            "weeklyResets": int(_ag_resets(body, ("weekly", "seven_day", "secondary")) or 0),
-            "detail": None,
-            "stale": time.time() - os.path.getmtime(path) > FIVE_HOUR * 60,
-        }
-
-    return unavailable(
-        "antigravity", name, "no usage recorded" if installed else "not installed"
-    )
+    return pools
 
 
-def _ag_window(body, keys):
-    """A percentage out of an Antigravity usage file, whatever it calls it."""
-    for key in keys:
-        value = body.get(key)
-        if isinstance(value, dict):
-            for inner in ("utilization", "used_percent", "usedPercent", "percent", "used"):
-                if isinstance(value.get(inner), (int, float)):
-                    return _ag_fraction(value[inner])
-        elif isinstance(value, (int, float)):
-            return _ag_fraction(value)
-    return None
+def _agy_pick(pools, window, wanted):
+    """One window out of the pools agy reports.
 
+    agy bills Gemini apart from the Claude and GPT models it can also drive, so
+    there is no single number. Unless a pool is asked for by name, the one
+    nearest its limit is the one worth showing -- it is the one that will stop
+    you first.
+    """
+    named = AGY_POOLS.get(wanted)
+    if named:
+        found = pools.get(named, {}).get(window)
+        return found
 
-def _ag_fraction(value):
-    # Accepts both 0..1 and 0..100 so either convention reads correctly
-    return value / 100.0 if value > 1 else float(value)
-
-
-def _ag_resets(body, keys):
-    for key in keys:
-        value = body.get(key)
-        if isinstance(value, dict):
-            for inner in ("resets_at", "resetsAt", "reset"):
-                raw = value.get(inner)
-                if isinstance(raw, (int, float)):
-                    return raw
-                if isinstance(raw, str):
-                    return iso_to_epoch(raw)
-    return 0
+    readings = [p[window] for p in pools.values() if window in p]
+    return max(readings, key=lambda r: r[0]) if readings else None
 
 
 COLLECTORS = [claude, codex, antigravity]
