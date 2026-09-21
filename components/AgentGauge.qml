@@ -14,9 +14,12 @@ RowLayout {
     required property color accent
 
     readonly property bool known: value >= 0
-    // A window this close to its limit is worth reading as a warning, the same
-    // way the hero cards flag a hot package
+    // A window this close to its limit is worth reading as a warning. Not the
+    // error red -- nothing is broken, it is just nearly spent -- but the
+    // palette's maximum contrast against the card, which is near-black on a
+    // light theme and stays as emphatic on a dark one.
     readonly property bool critical: known && value >= 0.9
+    readonly property color emphasis: Colours.palette.m3inverseSurface
 
     spacing: Tokens.spacing.small
 
@@ -33,7 +36,7 @@ RowLayout {
         implicitHeight: Tokens.padding.small
         value: root.known ? Math.min(1, root.value) : 0
         indeterminate: !root.known
-        fgColour: root.critical ? Colours.palette.m3error : root.accent
+        fgColour: root.critical ? root.emphasis : root.accent
 
         Behavior on value {
             Anim {}
@@ -48,7 +51,7 @@ RowLayout {
 
         text: root.known ? `${Math.round(root.value * 100)}%` : "–"
         font: Tokens.font.body.builders.small.build()
-        color: root.critical ? Colours.palette.m3error : Colours.palette.m3onSurface
+        color: root.critical ? root.emphasis : Colours.palette.m3onSurface
     }
 
     TextMetrics {

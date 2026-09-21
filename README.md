@@ -5,6 +5,10 @@ card in the Caelestia dashboard's Performance tab.
 
 ![the card beside the CPU hero card](docs/performance-tab.png)
 
+A window past 90% goes to the palette's maximum contrast against the card
+rather than the error red — nothing is broken when an agent is nearly spent,
+it just wants looking at.
+
 Every agent bills against the same two rolling windows — a short one and a
 week — so all three get the same pair of gauges, sitting beside a blob that
 swells as the agent gets used up, the way the CPU card's usage blob does.
