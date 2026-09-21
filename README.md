@@ -1,0 +1,95 @@
+# AgentUsage
+
+Five-hour and weekly usage limits for the coding agents on this machine, as a
+card in the Caelestia dashboard's Performance tab.
+
+![the card beside the CPU hero card](docs/performance-tab.png)
+
+Every agent bills against the same two rolling windows — a short one and a
+week — so all three get the same pair of gauges, sitting beside a blob that
+swells as the agent gets used up, the way the CPU card's usage blob does.
+
+| Agent | Where the reading comes from |
+|---|---|
+| Claude Code | The usage endpoint, asked with the OAuth credentials Claude Code already stores in `~/.claude/.credentials.json`. |
+| Codex | The `rate_limits` record the server returns with every response, as written into the newest session log under `~/.codex/sessions`. |
+| Antigravity | A usage file under an Antigravity data directory, or one named by hand in the plugin settings. |
+
+An agent that is not installed, not signed in, or has never been run says so
+instead of drawing an empty gauge — nothing here reports 0% for "no idea".
+
+Codex only learns its limits while it is running, so its reading is as old as
+its last session. Where a window's own reset time has passed since then, the
+window is reported as empty rather than as whatever it was when Codex last
+looked.
+
+## Requires
+
+A shell carrying Caelestia's plugin loader, and a Performance tab that renders
+`custom` entry points asking for the `performance` slot:
+
+```qml
+Repeater {
+    model: Plugins.entryPoints(EntryPointType.Custom).filter(e => e.properties.slot === "performance")
+
+    EntryPointLoader {
+        required property var modelData
+
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+
+        entryPoint: modelData
+    }
+}
+```
+
+Both live in [kagami-caelestia](https://github.com/dcqwqc/kagami-caelestia).
+The hero cards there give up their stretch while a plugin holds that slot, so
+the CPU card's usage blob stays beside the CPU readout instead of being pushed
+to the far right of the row.
+
+`python3` for the collector. No other dependencies.
+
+## Install
+
+```sh
+git clone https://github.com/dcqwqc/caelestia-plugin-agent-usage \
+    ~/.local/share/caelestia/plugins/agent-usage
+```
+
+Then enable `dcqwqc/agentusage` on the Plugins page.
+
+## Settings
+
+| Setting | Default | |
+|---|---|---|
+| Refresh interval | 120s | Claude Code is asked over the network, the rest is read off disk. |
+| Show Claude Code / Codex / Antigravity | on | Hides a row entirely. |
+| Antigravity usage file | — | Path to a JSON file holding Antigravity's limits, for an install the collector cannot find on its own. |
+
+The collector caches to `$XDG_RUNTIME_DIR/caelestia-agent-usage.json` for half
+the refresh interval, so several shells on one machine do not each go asking.
+
+## Antigravity
+
+Antigravity is read from disk, not queried, because it has no documented local
+endpoint. The collector looks in `~/.antigravity`, `~/.config/Antigravity` and
+`~/.local/share/antigravity` for a `usage.json`, `quota.json`,
+`rate_limits.json`, `limits.json` or any `usage*.json`, and accepts either
+`{"five_hour": 12, "weekly": 40}` or the nested
+`{"primary": {"used_percent": 12}}` shape, in 0–1 or 0–100.
+
+Point the setting at a file of that shape to feed it something else.
+
+## Marks
+
+The three marks are drawn as single filled paths so they take the palette like
+any other icon. Claude's and OpenAI's are from
+[simple-icons](https://github.com/simple-icons/simple-icons) (CC0);
+Antigravity's is from [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme)
+(GPL-3.0), flattened to its silhouette. Each is a trademark of its owner and is
+used here only to label that owner's own service.
+
+## Licence
+
+GPL-3.0.

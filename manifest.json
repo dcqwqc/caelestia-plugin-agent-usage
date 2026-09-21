@@ -1,0 +1,16 @@
+{
+  "name": "AgentUsage",
+  "version": "0.1.0",
+  "author": "dcqwqc",
+  "homepage": "https://github.com/dcqwqc/caelestia-plugin-agent-usage",
+  "icon": "smart_toy",
+  "description": "Five-hour and weekly usage limits for Claude Code, Codex and Antigravity, as a card beside the CPU in the dashboard's Performance tab.",
+  "entryPoints": [
+    {
+      "type": "custom",
+      "source": "cards/AgentUsageCard.qml",
+      "properties": { "slot": "performance" }
+    }
+  ],
+  "settings": "Settings.qml"
+}

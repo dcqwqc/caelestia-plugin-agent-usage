@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""Collect the rolling usage limits of the coding agents installed on this
+machine and print them as one JSON document.
+
+Every agent reports the same two windows, because that is what all three of
+them bill against: a short rolling window (five hours) and a long one (a
+week). An agent that is not installed, not signed in, or has not been run
+since its last reset is reported as unavailable rather than as zero -- an
+empty gauge and a missing gauge are very different things to look at.
+
+Output:
+
+    {
+      "generated": 1790000000,
+      "agents": [
+        {
+          "id": "claude", "name": "Claude Code", "available": true,
+          "fiveHour": 0.02, "weekly": 0.44,
+          "fiveHourResets": 1790000000, "weeklyResets": 1790500000,
+          "detail": null, "stale": false
+        },
+        ...
+      ]
+    }
+
+Percentages are fractions in 0..1 so the QML side can feed them straight to a
+progress bar. `stale` marks a reading recovered from an agent's own on-disk
+log rather than from a live query, so the card can say so.
+"""
+
+import json
+import os
+import sys
+import time
+import glob
+import urllib.request
+import urllib.error
+
+HOME = os.path.expanduser("~")
+CACHE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "caelestia-agent-usage.json"
+)
+
+FIVE_HOUR = 300       # minutes
+WEEK = 7 * 24 * 60    # minutes
+
+
+def unavailable(agent_id, name, detail):
+    return {
+        "id": agent_id,
+        "name": name,
+        "available": False,
+        "fiveHour": -1,
+        "weekly": -1,
+        "fiveHourResets": 0,
+        "weeklyResets": 0,
+        "detail": detail,
+        "stale": False,
+    }
+
+
+def iso_to_epoch(value):
+    if not value:
+        return 0
+    try:
+        from datetime import datetime
+
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
+
+
+# --------------------------------------------------------------------------
+# Claude Code -- the OAuth credentials Claude Code itself stores answer the
+# same usage endpoint its /usage command reads.
+# --------------------------------------------------------------------------
+
+CLAUDE_CREDS = os.path.join(HOME, ".claude", ".credentials.json")
+CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+
+
+def claude(timeout):
+    name = "Claude Code"
+
+    try:
+        with open(CLAUDE_CREDS) as f:
+            oauth = json.load(f).get("claudeAiOauth") or {}
+    except FileNotFoundError:
+        return unavailable("claude", name, "not installed")
+    except Exception as e:
+        return unavailable("claude", name, "credentials unreadable")
+
+    token = oauth.get("accessToken")
+    if not token:
+        return unavailable("claude", name, "not signed in")
+
+    expires = oauth.get("expiresAt")
+    if expires and expires / 1000 < time.time():
+        return unavailable("claude", name, "session expired")
+
+    req = urllib.request.Request(
+        CLAUDE_USAGE_URL,
+        headers={
+            "Authorization": "Bearer " + token,
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = json.load(r)
+    except urllib.error.HTTPError as e:
+        return unavailable(
+            "claude", name, "signed out" if e.code in (401, 403) else "api error"
+        )
+    except Exception:
+        return unavailable("claude", name, "offline")
+
+    short = body.get("five_hour") or {}
+    long = body.get("seven_day") or {}
+
+    return {
+        "id": "claude",
+        "name": name,
+        "available": True,
+        "fiveHour": (short.get("utilization") or 0) / 100.0,
+        "weekly": (long.get("utilization") or 0) / 100.0,
+        "fiveHourResets": iso_to_epoch(short.get("resets_at")),
+        "weeklyResets": iso_to_epoch(long.get("resets_at")),
+        "detail": None,
+        "stale": False,
+    }
+
+
+# --------------------------------------------------------------------------
+# Codex -- every rollout file carries the rate limits the server returned with
+# the last response of that session, so the newest session that has any is the
+# most recent reading there is.
+# --------------------------------------------------------------------------
+
+CODEX_SESSIONS = os.path.join(HOME, ".codex", "sessions")
+CODEX_SCAN = 12  # newest rollout files to look through
+
+
+def codex(_timeout):
+    name = "Codex"
+
+    if not os.path.isdir(CODEX_SESSIONS):
+        return unavailable("codex", name, "not installed")
+
+    files = glob.glob(os.path.join(CODEX_SESSIONS, "**", "rollout-*.jsonl"), recursive=True)
+    if not files:
+        return unavailable("codex", name, "never run")
+
+    files.sort(key=os.path.getmtime, reverse=True)
+
+    best = None
+    for path in files[:CODEX_SCAN]:
+        reading = _codex_limits(path)
+        if reading and (best is None or reading[2] > best[2]):
+            best = reading
+
+    if best is None:
+        return unavailable("codex", name, "no usage recorded")
+
+    primary, secondary, seen = best
+    short = primary if primary.get("window_minutes", 0) <= FIVE_HOUR * 2 else secondary
+    long = secondary or primary
+
+    short_pct, short_reset, short_stale = _codex_window(short)
+    long_pct, long_reset, long_stale = _codex_window(long)
+
+    return {
+        "id": "codex",
+        "name": name,
+        "available": True,
+        "fiveHour": short_pct,
+        "weekly": long_pct,
+        "fiveHourResets": short_reset,
+        "weeklyResets": long_reset,
+        "detail": None,
+        "stale": short_stale or long_stale,
+    }
+
+
+def _codex_window(window):
+    """One window of a Codex reading, rolled forward if it has since reset."""
+    if not window:
+        return -1, 0, False
+
+    used = (window.get("used_percent") or 0) / 100.0
+    resets = int(window.get("resets_at") or 0)
+
+    # The reading is only ever as old as the last Codex run. Once its own reset
+    # time has passed the window has emptied, whatever the recorded figure said.
+    if resets and resets < time.time():
+        return 0.0, 0, True
+
+    return used, resets, False
+
+
+def _codex_limits(path):
+    """The last rate_limits record in one rollout file, with its own timestamp."""
+    try:
+        with open(path, errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    for line in reversed(lines):
+        if '"rate_limits"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+
+        limits = _find_key(entry, "rate_limits")
+        if not limits:
+            continue
+
+        primary = limits.get("primary")
+        secondary = limits.get("secondary")
+        if not primary and not secondary:
+            continue
+
+        seen = iso_to_epoch(entry.get("timestamp")) or os.path.getmtime(path)
+        return primary or {}, secondary or {}, seen
+
+    return None
+
+
+def _find_key(obj, key):
+    """rate_limits sits at a different depth across Codex versions."""
+    if isinstance(obj, dict):
+        if isinstance(obj.get(key), dict):
+            return obj[key]
+        for value in obj.values():
+            found = _find_key(value, key)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _find_key(value, key)
+            if found:
+                return found
+    return None
+
+
+# --------------------------------------------------------------------------
+# Antigravity -- reads whatever its install writes, and can be pointed at a
+# file by hand through the plugin settings for a layout this does not know.
+# --------------------------------------------------------------------------
+
+ANTIGRAVITY_DIRS = [
+    os.path.join(HOME, ".antigravity"),
+    os.path.join(HOME, ".config", "Antigravity"),
+    os.path.join(HOME, ".local", "share", "antigravity"),
+]
+ANTIGRAVITY_NAMES = ["usage.json", "quota.json", "rate_limits.json", "limits.json"]
+
+
+def antigravity(_timeout):
+    name = "Antigravity"
+
+    override = os.environ.get("CAELESTIA_AGENT_USAGE_ANTIGRAVITY")
+    candidates = [override] if override else []
+
+    installed = bool(candidates)
+    for root in ANTIGRAVITY_DIRS:
+        if not os.path.isdir(root):
+            continue
+        installed = True
+        for entry in ANTIGRAVITY_NAMES:
+            candidates.append(os.path.join(root, entry))
+        candidates.extend(
+            sorted(glob.glob(os.path.join(root, "**", "usage*.json"), recursive=True))
+        )
+
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as f:
+                body = json.load(f)
+        except Exception:
+            continue
+
+        short = _ag_window(body, ("five_hour", "fiveHour", "primary", "short"))
+        long = _ag_window(body, ("weekly", "seven_day", "sevenDay", "secondary", "long"))
+        if short is None and long is None:
+            continue
+
+        return {
+            "id": "antigravity",
+            "name": name,
+            "available": True,
+            "fiveHour": short if short is not None else -1,
+            "weekly": long if long is not None else -1,
+            "fiveHourResets": int(_ag_resets(body, ("five_hour", "fiveHour", "primary")) or 0),
+            "weeklyResets": int(_ag_resets(body, ("weekly", "seven_day", "secondary")) or 0),
+            "detail": None,
+            "stale": time.time() - os.path.getmtime(path) > FIVE_HOUR * 60,
+        }
+
+    return unavailable(
+        "antigravity", name, "no usage recorded" if installed else "not installed"
+    )
+
+
+def _ag_window(body, keys):
+    """A percentage out of an Antigravity usage file, whatever it calls it."""
+    for key in keys:
+        value = body.get(key)
+        if isinstance(value, dict):
+            for inner in ("utilization", "used_percent", "usedPercent", "percent", "used"):
+                if isinstance(value.get(inner), (int, float)):
+                    return _ag_fraction(value[inner])
+        elif isinstance(value, (int, float)):
+            return _ag_fraction(value)
+    return None
+
+
+def _ag_fraction(value):
+    # Accepts both 0..1 and 0..100 so either convention reads correctly
+    return value / 100.0 if value > 1 else float(value)
+
+
+def _ag_resets(body, keys):
+    for key in keys:
+        value = body.get(key)
+        if isinstance(value, dict):
+            for inner in ("resets_at", "resetsAt", "reset"):
+                raw = value.get(inner)
+                if isinstance(raw, (int, float)):
+                    return raw
+                if isinstance(raw, str):
+                    return iso_to_epoch(raw)
+    return 0
+
+
+COLLECTORS = [claude, codex, antigravity]
+
+
+def collect(timeout):
+    return {
+        "generated": int(time.time()),
+        "agents": [collector(timeout) for collector in COLLECTORS],
+    }
+
+
+def cached(max_age):
+    if max_age <= 0:
+        return None
+    try:
+        with open(CACHE) as f:
+            body = json.load(f)
+    except Exception:
+        return None
+    if time.time() - body.get("generated", 0) > max_age:
+        return None
+    return body
+
+
+def store(body):
+    try:
+        tmp = CACHE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(body, f)
+        os.replace(tmp, CACHE)
+    except OSError:
+        pass
+
+
+def main():
+    args = sys.argv[1:]
+    max_age = 0
+    timeout = 8
+
+    for i, arg in enumerate(args):
+        if arg == "--max-age" and i + 1 < len(args):
+            max_age = float(args[i + 1])
+        elif arg == "--timeout" and i + 1 < len(args):
+            timeout = float(args[i + 1])
+
+    body = cached(max_age)
+    if body is None:
+        body = collect(timeout)
+        store(body)
+
+    json.dump(body, sys.stdout)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
