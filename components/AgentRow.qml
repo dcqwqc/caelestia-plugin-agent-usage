@@ -19,27 +19,31 @@ RowLayout {
     readonly property real weekly: available ? (agent.weekly ?? -1) : -1
     readonly property real peak: Math.max(fiveHour, weekly)
     readonly property color colour: available ? accent : Colours.palette.m3onSurfaceVariant
+    // Keep the labels counting down between usage polls as well.
+    property int nowEpoch: Math.floor(Date.now() / 1000)
 
-    // The soonest of the two windows to come back, as a human interval
-    readonly property string resetText: {
-        if (!available)
-            return "";
-
-        const now = Date.now() / 1000;
-        const times = [agent.fiveHourResets ?? 0, agent.weeklyResets ?? 0].filter(t => t > now);
-        if (times.length === 0)
-            return agent.stale ? qsTr("stale") : "";
-
-        let mins = Math.round((Math.min(...times) - now) / 60);
+    function shortResetText(reset: real): string {
+        let mins = Math.max(0, Math.ceil((reset - nowEpoch) / 60));
         if (mins < 60)
             return qsTr("%1m").arg(mins);
 
         const hours = Math.floor(mins / 60);
         mins %= 60;
-        if (hours < 24)
-            return mins > 0 ? qsTr("%1h %2m").arg(hours).arg(mins) : qsTr("%1h").arg(hours);
+        return mins > 0 ? qsTr("%1h %2m").arg(hours).arg(mins) : qsTr("%1h").arg(hours);
+    }
 
-        return qsTr("%1d %2h").arg(Math.floor(hours / 24)).arg(hours % 24);
+    function weeklyResetText(reset: real): string {
+        // A week label is deliberately days-only: it replaces WEEK without
+        // widening the card and answers the useful long-window question.
+        return qsTr("%1d").arg(Math.max(0, Math.ceil((reset - nowEpoch) / 86400)));
+    }
+
+    Timer {
+        interval: 60000
+        running: root.available
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.nowEpoch = Math.floor(Date.now() / 1000)
     }
 
     spacing: Tokens.spacing.medium
@@ -92,8 +96,8 @@ RowLayout {
             }
 
             StyledText {
-                visible: text.length > 0
-                text: root.available ? root.resetText : (root.agent?.detail ?? "")
+                visible: !root.available && text.length > 0
+                text: root.agent?.detail ?? ""
                 font: Tokens.font.body.small
                 color: Colours.palette.m3onSurfaceVariant
                 elide: Text.ElideRight
@@ -107,14 +111,16 @@ RowLayout {
 
             AgentGauge {
                 Layout.fillWidth: true
-                label: qsTr("5H")
+                label: root.agent?.fiveHourResets > root.nowEpoch
+                    ? root.shortResetText(root.agent.fiveHourResets) : qsTr("5H")
                 value: root.fiveHour
                 accent: root.accent
             }
 
             AgentGauge {
                 Layout.fillWidth: true
-                label: qsTr("WEEK")
+                label: root.agent?.weeklyResets > root.nowEpoch
+                    ? root.weeklyResetText(root.agent.weeklyResets) : qsTr("WEEK")
                 value: root.weekly
                 accent: root.accent
             }

@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import urllib.request
 import urllib.error
+import urllib.parse
 
 HOME = os.path.expanduser("~")
 CACHE = os.path.join(
@@ -79,6 +80,70 @@ def iso_to_epoch(value):
 
 CLAUDE_CREDS = os.path.join(HOME, ".claude", ".credentials.json")
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+# Claude Code is an OAuth public client.  This is its published client id, not
+# a secret; it is needed to exchange the refresh token it already keeps.
+CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+
+def refresh_claude_token(oauth):
+    """Refresh an expired Claude Code access token and persist the new pair."""
+    refresh = oauth.get("refreshToken")
+    if not refresh:
+        return None
+
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+        "client_id": CLAUDE_CLIENT_ID,
+    }).encode()
+    req = urllib.request.Request(
+        CLAUDE_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            # The token service rejects Python's default user agent before it
+            # can process the OAuth exchange.
+            "User-Agent": "claude-code/2.1.270",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            refreshed = json.load(response)
+    except Exception:
+        return None
+
+    access = refreshed.get("access_token")
+    if not access:
+        return None
+
+    # Keep the credential file in the format Claude Code itself owns.  OAuth
+    # servers may rotate refresh tokens, so retain the previous one only when
+    # the response does not supply a replacement.
+    updated = dict(oauth)
+    updated["accessToken"] = access
+    updated["refreshToken"] = refreshed.get("refresh_token") or refresh
+    if refreshed.get("expires_in") is not None:
+        updated["expiresAt"] = int((time.time() + float(refreshed["expires_in"])) * 1000)
+    if refreshed.get("refresh_token_expires_in") is not None:
+        updated["refreshTokenExpiresAt"] = int(
+            (time.time() + float(refreshed["refresh_token_expires_in"])) * 1000
+        )
+
+    try:
+        with open(CLAUDE_CREDS) as f:
+            credentials = json.load(f)
+        credentials["claudeAiOauth"] = updated
+        tmp = CLAUDE_CREDS + ".agent-usage.tmp"
+        with open(tmp, "w") as f:
+            json.dump(credentials, f)
+        os.replace(tmp, CLAUDE_CREDS)
+    except Exception:
+        # The fresh token is still usable for this reading even if another
+        # Claude process won the race to write the credentials file.
+        pass
+
+    return updated
 
 
 def claude(timeout):
@@ -98,7 +163,12 @@ def claude(timeout):
 
     expires = oauth.get("expiresAt")
     if expires and expires / 1000 < time.time():
-        return unavailable("claude", name, "session expired")
+        oauth = refresh_claude_token(oauth)
+        if not oauth:
+            # An expired access token is normal.  Keep retrying its still-live
+            # refresh token on later polls rather than calling this a sign-out.
+            return unavailable("claude", name, "refresh unavailable")
+        token = oauth["accessToken"]
 
     req = urllib.request.Request(
         CLAUDE_USAGE_URL,
