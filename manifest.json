@@ -10,6 +10,11 @@
       "type": "custom",
       "source": "cards/AgentUsageCard.qml",
       "properties": { "slot": "performance" }
+    },
+    {
+      "type": "custom",
+      "source": "components/CalendarMarker.qml",
+      "properties": { "slot": "calendarDate" }
     }
   ],
   "settings": "Settings.qml"

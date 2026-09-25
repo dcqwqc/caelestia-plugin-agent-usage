@@ -12,6 +12,14 @@ SettingsObject {
         step: 30
     }
 
+    property bool markCalendarResets: true
+    SettingMeta on markCalendarResets {
+        label: "Mark calendar resets"
+        description: "Mark dates on the calendar where an agent usage limit resets."
+        icon: "calendar_today"
+        inputType: SettingMeta.Switch
+    }
+
     property bool showClaude: true
     SettingMeta on showClaude {
         label: "Show Claude Code"
