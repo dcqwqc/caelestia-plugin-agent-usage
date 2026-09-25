@@ -45,9 +45,11 @@ Item {
         return active;
     }
 
-    Item {
+    Row {
         id: row
-        anchors.fill: parent
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: -1
+        spacing: -16
 
         Repeater {
             model: Agents.AgentUsage.agents
@@ -71,11 +73,6 @@ Item {
                 color: markerColor
                 opacity: 0.6
                 clip: true
-                anchors.centerIn: parent
-                anchors.verticalCenterOffset: -1
-                // Only rotate if there are multiple agents, so single agents aren't weirdly rotated
-                // A Sunny shape has 8 points (45 degrees each), so a 22.5 degree rotation perfectly aligns the points into the valleys!
-                rotation: root.activeAgentsOnDate.length > 1 ? activeIndex * 22.5 : 0
             }
         }
     }
