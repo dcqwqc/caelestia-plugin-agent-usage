@@ -9,7 +9,9 @@ Item {
     id: root
 
     // Passed by EntryPointLoader in Calendar.qml
-    property var calendarDate: parent ? parent.calendarDate : undefined
+    property int calendarYear: parent ? parent.calendarYear : -1
+    property int calendarMonth: parent ? parent.calendarMonth : -1
+    property int calendarDay: parent ? parent.calendarDay : -1
     property bool isToday: parent ? parent.isToday : false
 
     // Injected by the entry point loader
@@ -22,7 +24,7 @@ Item {
 
     // Calculate all agents that reset on this date
     property var activeAgentsOnDate: {
-        if (!calendarDate) return [];
+        if (calendarYear === -1) return [];
         let active = [];
         for (let j = 0; j < Agents.AgentUsage.agents.length; j++) {
             let ag = Agents.AgentUsage.agents[j];
@@ -33,9 +35,9 @@ Item {
             let matches = false;
             for (let i = 0; i < resets.length; i++) {
                 let resetDate = new Date(resets[i] * 1000);
-                if (resetDate.getFullYear() === calendarDate.getFullYear() &&
-                    resetDate.getMonth() === calendarDate.getMonth() &&
-                    resetDate.getDate() === calendarDate.getDate()) {
+                if (resetDate.getFullYear() === calendarYear &&
+                    resetDate.getMonth() === calendarMonth &&
+                    resetDate.getDate() === calendarDay) {
                     matches = true;
                     break;
                 }
