@@ -19,7 +19,7 @@ Item {
 
     property bool markCalendarResets: settings?.markCalendarResets ?? true
 
-    visible: markCalendarResets && !isToday
+    visible: markCalendarResets
     anchors.fill: parent
 
     // Calculate all agents that reset on this date
